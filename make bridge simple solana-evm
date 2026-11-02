@@ -1,0 +1,90 @@
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract SolanaEVMBridge {
+
+    address public owner;
+
+    mapping(address => uint256) public lockedBalances;
+    mapping(bytes32 => bool) public processedTransfers;
+
+    event TokensLocked(
+        address indexed sender,
+        string solanaAddress,
+        uint256 amount,
+        bytes32 transferId
+    );
+
+    event TokensReleased(
+        address indexed recipient,
+        uint256 amount,
+        bytes32 transferId
+    );
+
+    constructor() {
+        owner = msg.sender;
+    }
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Not authorized");
+        _;
+    }
+
+    // Lock native EVM tokens for Solana transfer
+    function bridgeToSolana(
+        string memory solanaAddress
+    ) external payable {
+
+        require(msg.value > 0, "Amount must be greater than zero");
+        require(bytes(solanaAddress).length > 0, "Invalid address");
+
+        lockedBalances[msg.sender] += msg.value;
+
+        bytes32 transferId = keccak256(
+            abi.encodePacked(
+                msg.sender,
+                solanaAddress,
+                msg.value,
+                block.timestamp
+            )
+        );
+
+        emit TokensLocked(
+            msg.sender,
+            solanaAddress,
+            msg.value,
+            transferId
+        );
+    }
+
+    // Release tokens after verified Solana transfer
+    function releaseFromSolana(
+        address recipient,
+        uint256 amount,
+        bytes32 transferId
+    ) external onlyOwner {
+
+        require(!processedTransfers[transferId], "Already processed");
+        require(address(this).balance >= amount, "Insufficient liquidity");
+
+        processedTransfers[transferId] = true;
+
+        (bool success, ) = payable(recipient).call{value: amount}("");
+        require(success, "Transfer failed");
+
+        emit TokensReleased(
+            recipient,
+            amount,
+            transferId
+        );
+    }
+
+    function getBridgeBalance()
+        external
+        view
+        returns (uint256)
+    {
+        return address(this).balance;
+    }
+}
